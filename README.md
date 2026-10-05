@@ -1,0 +1,1 @@
+# bad-code-patterns-scanner
