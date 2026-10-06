@@ -23,9 +23,9 @@ def review_candidates(repo: Path | None = None, chooser: Chooser | None = None) 
     for pattern in candidates:
         decision = choose(pattern).strip().lower()
         if decision in {"c", "confirm"}:
-            confirm_pattern(pattern, repo)
+            url = confirm_pattern(pattern, repo)
             delete_candidate(pattern.id)
-            notes.append(f"confirmed {pattern.id}")
+            notes.append(f"opened pull request for {pattern.id}: {url}")
         elif decision in {"r", "reject"}:
             reject_pattern(pattern, repo)
             delete_candidate(pattern.id)
