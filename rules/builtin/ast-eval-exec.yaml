@@ -1,0 +1,13 @@
+id: ast.eval-exec
+status: confirmed
+severity: high
+confidence: 0.8
+category: insecure-default
+languages: [python]
+message: Dynamic evaluation is used.
+detect:
+  type: ast
+  predicate: eval-exec
+examples:
+  match: "result = eval(payload)"
+  reject: "result = evaluate(payload)"

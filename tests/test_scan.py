@@ -15,6 +15,9 @@ EXPECTED = {
     "insecure.dynamic-exec",
     "insecure.requests-verify-false",
     "secret.placeholder",
+    "ast.eval-exec",
+    "ast.subprocess-shell",
+    "ast.requests-verify-false",
 }
 
 
@@ -70,6 +73,23 @@ def test_include_tests_scans_docs_and_tests() -> None:
     paths = {item["path"] for item in json.loads(result.stdout)["findings"]}
     assert "docs/guide.md" in paths
     assert "tests/client_check.py" in paths
+
+
+def test_missing_dependency_and_no_network(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "requirements.txt").write_text("missing-pkg\n", encoding="utf-8")
+    monkeypatch.setattr("badscan.engine.registry.default_exists", lambda ecosystem, name: False)
+    result = RUNNER.invoke(app, ["scan", str(tmp_path), "--format", "json"])
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["findings"][0]["rule_id"] == "supply.hallucinated-dependency"
+
+    def explode(ecosystem: str, name: str) -> bool:
+        raise AssertionError("registry lookup")
+
+    monkeypatch.setattr("badscan.engine.registry.default_exists", explode)
+    skipped = RUNNER.invoke(app, ["scan", str(tmp_path), "--no-network"])
+    assert skipped.exit_code == 0
+    assert "no findings" in skipped.stdout
 
 
 def test_bad_target_exits_two() -> None:

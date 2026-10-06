@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from badscan.library.loader import LibraryError, load_patterns
+from badscan.library.loader import LibraryError, load_known_ids, load_patterns
 from badscan.library.schema import PatternParseError, parse_pattern
 
 SAMPLE = """\
@@ -56,12 +56,22 @@ def test_invalid_regex_is_rejected() -> None:
         parse_pattern(broken, source="broken.yaml")
 
 
-def test_ast_detect_is_rejected_in_phase_1() -> None:
+def test_known_ast_predicate_parses() -> None:
     ast_rule = SAMPLE.replace(
         "type: regex\n  regex: '(?i)as an ai'",
         "type: ast\n  predicate: bare-except",
     )
-    with pytest.raises(PatternParseError):
+    pattern = parse_pattern(ast_rule, source="ast.yaml")
+    assert pattern.detect.type == "ast"
+    assert pattern.detect.predicate == "bare-except"
+
+
+def test_unknown_ast_predicate_is_rejected() -> None:
+    ast_rule = SAMPLE.replace(
+        "type: regex\n  regex: '(?i)as an ai'",
+        "type: ast\n  predicate: invented-check",
+    )
+    with pytest.raises(PatternParseError, match="unknown AST predicate"):
         parse_pattern(ast_rule, source="ast.yaml")
 
 
@@ -70,6 +80,16 @@ def test_duplicate_id_is_rejected(tmp_path: Path) -> None:
     _write(tmp_path / "learned", "two.yaml", SAMPLE)
     with pytest.raises(LibraryError, match="duplicate pattern id"):
         load_patterns(tmp_path)
+
+
+def test_known_ids_include_rejected_rules(tmp_path: Path) -> None:
+    _write(tmp_path / "builtin", "one.yaml", SAMPLE)
+    rejected = SAMPLE.replace("ai.residue.assistant-voice", "learned.old-idea")
+    rejected = rejected.replace("status: confirmed", "status: rejected")
+    _write(tmp_path / "rejected", "old.yaml", rejected)
+    (tmp_path / "learned").mkdir()
+    assert load_known_ids(tmp_path) == {"ai.residue.assistant-voice", "learned.old-idea"}
+    assert [pattern.id for pattern in load_patterns(tmp_path)] == ["ai.residue.assistant-voice"]
 
 
 def test_unconfirmed_pattern_is_rejected(tmp_path: Path) -> None:

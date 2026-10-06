@@ -13,6 +13,10 @@ EXPECTED = {
     "insecure.requests-verify-false",
     "insecure.subprocess-shell",
     "insecure.dynamic-exec",
+    "ast.bare-except",
+    "ast.eval-exec",
+    "ast.subprocess-shell",
+    "ast.requests-verify-false",
 }
 
 

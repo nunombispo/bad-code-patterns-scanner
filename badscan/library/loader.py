@@ -47,15 +47,7 @@ def load_patterns(root: Path | None = None) -> list[Pattern]:
     patterns: list[Pattern] = []
     seen: set[str] = set()
     for folder in ("builtin", "learned"):
-        directory = rules / folder
-        if not directory.is_dir():
-            raise LibraryError(f"missing pattern directory: {directory}")
-        paths = sorted(
-            path
-            for path in directory.iterdir()
-            if path.is_file() and path.suffix in {".yaml", ".yml"}
-        )
-        for path in paths:
+        for path in _pattern_files(rules / folder):
             pattern = load_pattern_file(path)
             if pattern.status != "confirmed":
                 raise LibraryError(f"{path}: only confirmed patterns are loaded")
@@ -64,3 +56,29 @@ def load_patterns(root: Path | None = None) -> list[Pattern]:
             seen.add(pattern.id)
             patterns.append(pattern)
     return patterns
+
+
+def load_known_ids(root: Path | None = None) -> set[str]:
+    """Ids already stored as builtin, learned, or rejected rules.
+
+    The learn path sends these to the model and drops duplicate proposals.
+    Rejected files are not executed.
+    """
+
+    rules = root if root is not None else rules_root()
+    ids: set[str] = set()
+    for folder in ("builtin", "learned", "rejected"):
+        directory = rules / folder
+        if not directory.is_dir():
+            raise LibraryError(f"missing pattern directory: {directory}")
+        for path in _pattern_files(directory):
+            ids.add(load_pattern_file(path).id)
+    return ids
+
+
+def _pattern_files(directory: Path) -> list[Path]:
+    if not directory.is_dir():
+        raise LibraryError(f"missing pattern directory: {directory}")
+    return sorted(
+        path for path in directory.iterdir() if path.is_file() and path.suffix in {".yaml", ".yml"}
+    )

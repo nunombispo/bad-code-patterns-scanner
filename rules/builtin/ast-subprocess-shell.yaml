@@ -1,0 +1,13 @@
+id: ast.subprocess-shell
+status: confirmed
+severity: high
+confidence: 0.84
+category: insecure-default
+languages: [python]
+message: subprocess is invoked with shell=True.
+detect:
+  type: ast
+  predicate: subprocess-shell
+examples:
+  match: "subprocess.run(cmd, shell=True)"
+  reject: "subprocess.run(cmd, shell=False)"
