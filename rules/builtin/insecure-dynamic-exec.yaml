@@ -1,0 +1,13 @@
+id: insecure.dynamic-exec
+status: confirmed
+severity: high
+confidence: 0.75
+category: insecure-default
+languages: [python, javascript, typescript]
+message: Dynamic evaluation is used.
+detect:
+  type: regex
+  regex: '(?<![\w.])(eval|exec)\s*\('
+examples:
+  match: "result = eval(payload)"
+  reject: "result = evaluate(payload)"
