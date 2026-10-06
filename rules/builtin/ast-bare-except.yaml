@@ -1,0 +1,21 @@
+id: ast.bare-except
+status: confirmed
+severity: medium
+confidence: 0.8
+category: error-handling
+languages: [python]
+message: Bare or blanket Exception handler hides the failure.
+detect:
+  type: ast
+  predicate: bare-except
+examples:
+  match: |
+    try:
+        run()
+    except:
+        pass
+  reject: |
+    try:
+        run()
+    except ValueError:
+        raise

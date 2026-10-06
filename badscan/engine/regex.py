@@ -21,8 +21,11 @@ def exclude_spec(excludes: list[str]) -> pathspec.PathSpec | None:
 
 
 def scan_regex(pattern: Pattern, files: list[ScannedFile]) -> list[Finding]:
-    compiled = re.compile(pattern.detect.regex)
-    excluded = exclude_spec(pattern.detect.exclude)
+    detect = pattern.detect
+    if detect.type != "regex":
+        return []
+    compiled = re.compile(detect.regex)
+    excluded = exclude_spec(detect.exclude)
     findings: list[Finding] = []
     for source in files:
         if not language_applies(pattern, source.language):

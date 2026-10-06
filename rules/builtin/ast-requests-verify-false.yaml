@@ -1,0 +1,13 @@
+id: ast.requests-verify-false
+status: confirmed
+severity: high
+confidence: 0.86
+category: insecure-default
+languages: [python]
+message: TLS verification is disabled.
+detect:
+  type: ast
+  predicate: requests-verify-false
+examples:
+  match: "requests.get(url, verify=False)"
+  reject: "requests.get(url, verify=True)"

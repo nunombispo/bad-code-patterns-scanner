@@ -1,11 +1,8 @@
-"""Shared scan types.
-
-Phase 1 stores findings and regex patterns. LearnResult arrives with the phase 2 agent.
-"""
+"""Shared scan types."""
 
 import re
 from datetime import date
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -15,7 +12,7 @@ SEVERITY_RANK: dict[str, int] = {"low": 0, "medium": 1, "high": 2}
 
 
 class RegexDetect(BaseModel):
-    """A textual pattern. Phase 1 runs this detect type only."""
+    """A textual pattern."""
 
     type: Literal["regex"]
     regex: str
@@ -29,6 +26,17 @@ class RegexDetect(BaseModel):
         except re.error as exc:
             raise ValueError(f"invalid regex: {exc}") from exc
         return value
+
+
+class AstDetect(BaseModel):
+    """A structural check chosen from the fixed AST catalog."""
+
+    type: Literal["ast"]
+    predicate: str
+    exclude: list[str] = Field(default_factory=list)
+
+
+Detect = Annotated[RegexDetect | AstDetect, Field(discriminator="type")]
 
 
 class PatternExamples(BaseModel):
@@ -52,7 +60,7 @@ class Pattern(BaseModel):
     category: str
     languages: list[str] = Field(default_factory=lambda: ["*"])
     message: str
-    detect: RegexDetect
+    detect: Detect
     examples: PatternExamples | None = None
     origin: PatternOrigin | None = None
 
@@ -73,6 +81,23 @@ class ScanResult(BaseModel):
     target: str
     files_scanned: int = Field(ge=0)
     findings: list[Finding]
+
+
+class LearnFinding(BaseModel):
+    """One observation from the learn agent, tied to a proposed pattern when it has one."""
+
+    path: str
+    start_line: int = Field(ge=1)
+    end_line: int = Field(ge=1)
+    observation: str
+    proposed_pattern_id: str | None = None
+
+
+class LearnResult(BaseModel):
+    """Structured output of the learn agent. The schema stays fixed across models."""
+
+    findings: list[LearnFinding] = Field(default_factory=list)
+    patterns: list[Pattern] = Field(default_factory=list)
 
 
 class ScannedFile(BaseModel):
