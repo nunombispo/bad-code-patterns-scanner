@@ -13,7 +13,7 @@ flowchart LR
   operator[Operator]
   cli[badscan]
   target[Public GitHub repo or local tree]
-  model[OpenAI-compatible model]
+  model[Model provider]
   registry[PyPI and npm]
   rules[Tool repo rules/]
 
@@ -25,7 +25,7 @@ flowchart LR
   cli -->|source chunks, only with --learn| model
 ```
 
-The tool repository is the pattern library. Target code is parsed and never executed. Target code leaves the machine only during `--learn`, when selected chunks are sent to the configured model endpoint.
+The tool repository is the pattern library. Target code is parsed and never executed. Target code leaves the machine only during `--learn`. That path is a Pydantic AI agent, so switching models means changing a `provider:name` string. The agent, its instructions, and the output schema stay the same.
 
 ## Components
 
@@ -52,7 +52,7 @@ flowchart TB
 
   subgraph learn [Learn path]
     select[Chunk selector]
-    client[Model client]
+    client[Pydantic AI agent]
     validate[Proposal validator]
     candidates[(Local candidates)]
   end
@@ -96,7 +96,7 @@ flowchart TB
 | AST catalog | Applies a fixed set of structural checks. The model selects a catalog id. It does not submit code to execute. Phase 2. |
 | Registry checks | Asks PyPI and npm whether a manifest dependency exists. Builtin detectors, because they need network lookups. Phase 2. |
 | Chunk selector | Chooses source chunks the saved library did not already explain with a high-confidence match. Used only with `--learn`. |
-| Model client | Sends those chunks to an OpenAI-compatible endpoint and asks for findings plus pattern proposals. |
+| Pydantic AI agent | Sends those chunks to the configured model and returns a typed `LearnResult` (findings plus pattern proposals). The model is a `provider:name` string, so the same agent runs against any provider Pydantic AI supports. |
 | Proposal validator | Compiles each proposed regex, checks the match example, and checks the reject example. Invalid proposals are kept with the finding and are not added to the library. |
 | Local candidates | Holds proposals that passed validation until the operator reviews them. This directory is outside the git repo. |
 | Repo writer | On confirm or reject, writes one YAML file into `rules/learned/` or `rules/rejected/` and commits it on the current branch. |
@@ -127,14 +127,14 @@ sequenceDiagram
   participant CLI as badscan
   participant Repo as Tool repo
   participant Target as Target repo
-  participant Model as Model API
+  participant Agent as Pydantic AI agent
 
   Op->>CLI: scan owner/repo --learn
   CLI->>Repo: load builtin, learned, rejected
   CLI->>Target: shallow clone
   CLI->>CLI: run saved rules
-  CLI->>Model: unexplained chunks and known rule ids
-  Model-->>CLI: findings and pattern proposals
+  CLI->>Agent: unexplained chunks and known rule ids
+  Agent-->>CLI: LearnResult findings and proposals
   CLI->>CLI: validate and store candidates locally
   CLI-->>Op: findings plus candidate count
 
@@ -153,13 +153,42 @@ Reject follows the same write path into `rules/rejected/`. A later `--learn` pas
 
 A scan without `--learn` stops after the saved rules run. That path is deterministic and does not call the model.
 
+## Learn agent
+
+Phase 2 implements `learn/agent.py` with Pydantic AI. One agent owns the instructions and the output schema. The model is injected at run time from `BADSCAN_MODEL`.
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent(
+    output_type=LearnResult,
+    instructions=(
+        "Propose reusable bad-code patterns for generated code "
+        "that was merged without review. Return findings and rules."
+    ),
+)
+
+result = await agent.run(prompt, model=os.environ["BADSCAN_MODEL"])
+proposals = result.output  # LearnResult
+```
+
+`LearnResult` is a Pydantic model with two lists: findings for this scan, and pattern proposals in the YAML schema above. Pydantic AI validates the model response into that type. The proposal validator then checks that each regex compiles and that the examples behave as claimed.
+
+`BADSCAN_MODEL` uses Pydantic AI's `provider:name` form. These are the same agent:
+
+- `openai:gpt-4.1`
+- `anthropic:claude-sonnet-4-5`
+- `google-gla:gemini-2.5-flash`
+
+Provider API keys stay in the environment variables that provider already uses. Tests pass `TestModel` instead of `BADSCAN_MODEL`, so a fixture run creates a candidate without calling a provider.
+
 ## Repository layout
 
 ```
 badscan/
   cli.py                 # scan, patterns review, patterns push
   orchestrator.py        # scan flow and learn flow
-  models.py              # Finding, Pattern, ScanResult
+  models.py              # Finding, Pattern, LearnResult, ScanResult
   fetch/
     local.py
     github.py            # shallow clone of one public repo
@@ -174,7 +203,7 @@ badscan/
     registry.py          # phase 2, PyPI and npm
   learn/
     select.py
-    client.py            # OpenAI-compatible HTTP client
+    agent.py             # Pydantic AI agent, output_type=LearnResult
     validate.py
     candidates.py        # local store, outside git
   review/
@@ -191,7 +220,7 @@ tests/
   fixtures/              # synthetic snippets, no live GitHub
 ```
 
-Stack: Python 3.11, Typer, httpx, PyYAML, Pydantic, pathspec, and the stdlib `ast` module. Tests use pytest. Linting uses Ruff. License is MIT.
+Stack: Python 3.11, Typer, httpx, PyYAML, Pydantic, Pydantic AI, pathspec, and the stdlib `ast` module. Tests use pytest. Linting uses Ruff. License is MIT.
 
 ## Pattern schema
 
@@ -248,7 +277,7 @@ Flags for `scan`: `--min-severity`, `--min-confidence`, `--include-tests`, `--no
 
 Exit codes: `0` when nothing meets the threshold, `1` when a finding does, `2` on usage or fetch errors.
 
-Model access is configured with `BADSCAN_BASE_URL`, `BADSCAN_API_KEY`, and `BADSCAN_MODEL`. `--learn` stays off unless a model is configured. `GITHUB_TOKEN` is optional and raises GitHub API rate limits. Cloning a public repository does not require a token.
+`--learn` stays off unless `BADSCAN_MODEL` is set. That value is a Pydantic AI model string, such as `openai:gpt-4.1` or `anthropic:claude-sonnet-4-5`. The provider reads its own API key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and the keys documented for the other providers). `GITHUB_TOKEN` is optional and raises GitHub API rate limits. Cloning a public repository does not require a token.
 
 ## Boundaries
 
@@ -257,7 +286,7 @@ Model access is configured with `BADSCAN_BASE_URL`, `BADSCAN_API_KEY`, and `BADS
 - File count and file size are capped. Vendored directories (`node_modules`, `vendor`, `dist`) and `.git` are skipped.
 - Tests and docs are skipped unless `--include-tests` is set.
 - The process never installs, imports, or executes code from the target.
-- `--learn` is the only path that sends source to a model endpoint. The README for the implementation must say that plainly.
+- `--learn` is the only path that sends source to a model provider, through the Pydantic AI agent. The README for the implementation must say that plainly.
 - One pattern is one file, so two confirms of different rules do not collide.
 - Candidates live in the local data directory until confirm or reject. Unconfirmed model output is not committed.
 
@@ -283,7 +312,9 @@ Done when `badscan scan` on a fixture tree reports the seeded patterns and write
 
 Deliver the loop that adds rules to this repository, plus the detectors that YAML regex cannot express.
 
-- `--learn` selects unexplained source chunks, calls the model, and validates proposals.
+- `--learn` selects unexplained source chunks and runs one Pydantic AI `Agent`. `output_type` is `LearnResult`, a Pydantic model with findings and pattern proposals. Instructions and the output schema stay fixed across models.
+- The model comes from `BADSCAN_MODEL` (`provider:name`). Switching from OpenAI to Anthropic, Gemini, Groq, or another provider Pydantic AI ships is a change to that string.
+- Tests drive the same agent with Pydantic AI's `TestModel`, so the learn path runs without a live provider.
 - Candidates are stored locally. `patterns review` confirms or rejects each one.
 - Confirm writes `rules/learned/<id>.yaml` and commits it. Reject writes `rules/rejected/<id>.yaml` and commits it.
 - The next `scan` loads the new learned file with no model call.
