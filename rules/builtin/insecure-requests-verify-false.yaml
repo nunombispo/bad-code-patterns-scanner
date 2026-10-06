@@ -1,0 +1,13 @@
+id: insecure.requests-verify-false
+status: confirmed
+severity: high
+confidence: 0.85
+category: insecure-default
+languages: [python]
+message: TLS verification is disabled.
+detect:
+  type: regex
+  regex: 'verify\s*=\s*False'
+examples:
+  match: "requests.get(url, verify=False)"
+  reject: "requests.get(url, verify=True)"
