@@ -1,0 +1,13 @@
+id: insecure.subprocess-shell
+status: confirmed
+severity: high
+confidence: 0.8
+category: insecure-default
+languages: [python]
+message: subprocess is invoked with shell=True.
+detect:
+  type: regex
+  regex: 'shell\s*=\s*True'
+examples:
+  match: "subprocess.run(cmd, shell=True)"
+  reject: "subprocess.run(cmd, shell=False)"

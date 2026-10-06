@@ -1,0 +1,14 @@
+id: stub.not-implemented
+status: confirmed
+severity: medium
+confidence: 0.8
+category: stub
+languages: ["*"]
+message: Stub body was left in place.
+detect:
+  type: regex
+  regex: |-
+    (?i)(raise\s+NotImplementedError|\bTODO:\s*implement\b|\bpass\s+#\s*implement\b)
+examples:
+  match: "raise NotImplementedError"
+  reject: "raise ValueError('missing')"
