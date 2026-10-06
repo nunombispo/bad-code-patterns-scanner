@@ -19,7 +19,7 @@ badscan scan ./path --learn
 badscan patterns review
 ```
 
-Confirm opens a pull request that adds `rules/learned/<id>.yaml`. The rule is used by later scans after that pull request is merged. This needs a GitHub `origin` and an authenticated `gh` command. Reject writes `rules/rejected/<id>.yaml` on the current branch. `--no-network` skips PyPI and npm lookups.
+Confirm opens a pull request that adds `rules/learned/<id>.yaml`. Reject opens a pull request that adds `rules/rejected/<id>.yaml`. Later scans use a confirmed rule, and later learn passes skip a rejected id, after the pull request is merged. This needs a GitHub `origin` and an authenticated `gh` command. `--no-network` skips PyPI and npm lookups.
 
 Exit `0` when nothing meets the threshold, `1` when a finding does, and `2` when the target or the rules cannot be read.
 

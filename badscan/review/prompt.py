@@ -27,9 +27,9 @@ def review_candidates(repo: Path | None = None, chooser: Chooser | None = None) 
             delete_candidate(pattern.id)
             notes.append(f"opened pull request for {pattern.id}: {url}")
         elif decision in {"r", "reject"}:
-            reject_pattern(pattern, repo)
+            url = reject_pattern(pattern, repo)
             delete_candidate(pattern.id)
-            notes.append(f"rejected {pattern.id}")
+            notes.append(f"opened pull request for {pattern.id}: {url}")
         else:
             notes.append(f"skipped {pattern.id}")
     return notes

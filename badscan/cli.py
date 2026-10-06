@@ -66,7 +66,7 @@ def scan(
 def review(
     repo: Path | None = typer.Option(None, "--repo", help="Tool checkout that receives the commit"),
 ) -> None:
-    """Confirm or reject candidate patterns and commit that decision."""
+    """Confirm or reject a candidate by opening a pull request."""
 
     try:
         notes = review_candidates(repo)

@@ -1,7 +1,7 @@
 """Write a pattern back to the tool repository.
 
-Confirm opens a pull request so the rule is merged only after review.
-Reject commits a suppression on the current branch.
+Confirm and reject each open a pull request. The decision is recorded when
+that pull request is merged.
 """
 
 import re
@@ -30,7 +30,7 @@ def tool_checkout(explicit: Path | None = None) -> Path:
         if (candidate / ".git").exists() and (candidate / "rules" / "builtin").is_dir():
             _reject_installed_copy(candidate)
             return candidate
-    raise ReviewError("confirm runs inside a git checkout of this tool; pass --repo")
+    raise ReviewError("review runs inside a git checkout of this tool; pass --repo")
 
 
 def confirm_pattern(
@@ -39,31 +39,20 @@ def confirm_pattern(
     *,
     model_name: str | None = None,
 ) -> str:
-    """Commit the rule on a new branch and open a pull request.
+    """Open a pull request that adds the rule to rules/learned."""
 
-    The current branch stays unchanged. The rule is part of later scans after
-    the pull request is merged.
-    """
-
-    root = tool_checkout(repo)
-    stored = _prepare(pattern, model_name, "confirmed")
-    base = _base_branch(root)
-    branch = f"learned/{pattern.id}"
-    title = f"Add learned pattern {pattern.id}"
-    with tempfile.TemporaryDirectory(prefix="badscan-pr-") as tmp:
-        work = Path(tmp) / "checkout"
-        added = _git(root, "worktree", "add", "-b", branch, str(work), base)
-        if added.returncode != 0:
-            detail = (added.stderr or added.stdout).strip()
-            raise ReviewError(detail or "could not create the pull request branch")
-        try:
-            path = work / "rules" / "learned" / f"{pattern.id}.yaml"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(dump_pattern(stored), encoding="utf-8")
-            _commit(work, path, title)
-            return publish_pattern_pr(root, branch, base, title, _pr_body(stored))
-        finally:
-            _git(root, "worktree", "remove", "--force", str(work))
+    return _open_pattern_pr(
+        pattern,
+        repo,
+        model_name=model_name,
+        status="confirmed",
+        folder="learned",
+        branch=f"learned/{pattern.id}",
+        title=f"Add learned pattern {pattern.id}",
+        summary=(
+            "Merging this pull request adds the pattern to `rules/learned` so later scans use it."
+        ),
+    )
 
 
 def reject_pattern(
@@ -71,9 +60,52 @@ def reject_pattern(
     repo: Path | None = None,
     *,
     model_name: str | None = None,
-) -> Path:
-    message = f"Reject pattern {pattern.id}"
-    return _write(pattern, "rejected", "rejected", repo, model_name, message)
+) -> str:
+    """Open a pull request that records the rule in rules/rejected."""
+
+    return _open_pattern_pr(
+        pattern,
+        repo,
+        model_name=model_name,
+        status="rejected",
+        folder="rejected",
+        branch=f"rejected/{pattern.id}",
+        title=f"Reject pattern {pattern.id}",
+        summary=(
+            "Merging this pull request records the pattern in `rules/rejected` "
+            "so later learn passes do not propose it again."
+        ),
+    )
+
+
+def _open_pattern_pr(
+    pattern: Pattern,
+    repo: Path | None,
+    *,
+    model_name: str | None,
+    status: str,
+    folder: str,
+    branch: str,
+    title: str,
+    summary: str,
+) -> str:
+    root = tool_checkout(repo)
+    stored = _prepare(pattern, model_name, status)
+    base = _base_branch(root)
+    with tempfile.TemporaryDirectory(prefix="badscan-pr-") as tmp:
+        work = Path(tmp) / "checkout"
+        added = _git(root, "worktree", "add", "-b", branch, str(work), base)
+        if added.returncode != 0:
+            detail = (added.stderr or added.stdout).strip()
+            raise ReviewError(detail or "could not create the pull request branch")
+        try:
+            path = work / "rules" / folder / f"{pattern.id}.yaml"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(dump_pattern(stored), encoding="utf-8")
+            _commit(work, path, title)
+            return publish_pattern_pr(root, branch, base, title, _pr_body(stored, summary))
+        finally:
+            _git(root, "worktree", "remove", "--force", str(work))
 
 
 def publish_pattern_pr(repo: Path, branch: str, base: str, title: str, body: str) -> str:
@@ -123,7 +155,7 @@ def _prepare(pattern: Pattern, model_name: str | None, status: str) -> Pattern:
     return pattern.model_copy(update={"status": status, "origin": origin})
 
 
-def _pr_body(pattern: Pattern) -> str:
+def _pr_body(pattern: Pattern, summary: str) -> str:
     examples = pattern.examples
     match = examples.match if examples is not None else ""
     reject = examples.reject if examples is not None and examples.reject else ""
@@ -131,8 +163,7 @@ def _pr_body(pattern: Pattern) -> str:
     if pattern.origin is not None and pattern.origin.model:
         model = pattern.origin.model
     return (
-        "Merging this pull request adds the pattern to `rules/learned` "
-        "so later scans use it.\n\n"
+        f"{summary}\n\n"
         f"{pattern.message}\n\n"
         "Match example:\n"
         f"```\n{match}\n```\n\n"
@@ -165,23 +196,6 @@ def _github_slug(repo: Path) -> str:
     if match is None:
         raise ReviewError(f"origin is not a GitHub repository: {url}")
     return match.group("slug")
-
-
-def _write(
-    pattern: Pattern,
-    folder: str,
-    status: str,
-    repo: Path | None,
-    model_name: str | None,
-    message: str,
-) -> Path:
-    root = tool_checkout(repo)
-    stored = _prepare(pattern, model_name, status)
-    path = root / "rules" / folder / f"{pattern.id}.yaml"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(dump_pattern(stored), encoding="utf-8")
-    _commit(root, path, message)
-    return path
 
 
 def _validate_checkout(root: Path) -> None:
