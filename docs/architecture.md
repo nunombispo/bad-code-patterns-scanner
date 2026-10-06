@@ -99,7 +99,7 @@ flowchart TB
 | Pydantic AI agent | Sends those chunks to the configured model and returns a typed `LearnResult` (findings plus pattern proposals). The model is a `provider:name` string, so the same agent runs against any provider Pydantic AI supports. |
 | Proposal validator | Compiles each proposed regex, checks the match example, and checks the reject example. Invalid proposals are kept with the finding and are not added to the library. |
 | Local candidates | Holds proposals that passed validation until the operator reviews them. This directory is outside the git repo. |
-| Repo writer | On confirm, commits `rules/learned/<id>.yaml` on branch `learned/<id>` and opens a pull request. On reject, commits `rules/rejected/<id>.yaml` on the current branch. |
+| Repo writer | On confirm, commits `rules/learned/<id>.yaml` on branch `learned/<id>` and opens a pull request. On reject, commits `rules/rejected/<id>.yaml` on branch `rejected/<id>` and opens a pull request. |
 | Report | Renders findings as text or JSON. |
 
 `scan` never calls the model. `--learn` adds the learn path. `patterns review` is the only way a candidate becomes a pull request. Merging that pull request is what adds the file under `rules/`.
@@ -109,14 +109,15 @@ flowchart TB
 ```mermaid
 stateDiagram-v2
   [*] --> Candidate: proposal passes validation
-  Candidate --> PullRequest: confirm opens a pull request
-  PullRequest --> Learned: merge adds rules/learned
-  Candidate --> Rejected: reject writes rules/rejected and commits
+  Candidate --> LearnedPR: confirm opens a pull request
+  Candidate --> RejectedPR: reject opens a pull request
+  LearnedPR --> Learned: merge adds rules/learned
+  RejectedPR --> Rejected: merge adds rules/rejected
   Learned --> Applied: next scan loads the file
   Rejected --> Suppressed: next learn pass skips that id
 ```
 
-A proposal becomes a candidate only after the regex compiles, the match example matches, and the reject example does not. Confirm commits the rule on branch `learned/<id>`, pushes that branch, and opens a GitHub pull request against the default branch. The current checkout does not gain the rule. Merging the pull request is the manual validation that adds it to the library. Reject commits `rules/rejected/<id>.yaml` on the current branch.
+A proposal becomes a candidate only after the regex compiles, the match example matches, and the reject example does not. Confirm commits the rule on branch `learned/<id>` and opens a pull request. Reject commits it on branch `rejected/<id>` and opens a pull request. The current checkout stays unchanged. Merging the pull request is the manual validation that records the decision.
 
 Confirm runs inside a git checkout of this tool that has a GitHub `origin` and an authenticated `gh` command. Pass `--repo` when the shell is in another directory. The writer does not update an installed copy under `site-packages`.
 
@@ -151,7 +152,7 @@ sequenceDiagram
   CLI-->>Op: matches from builtin and learned rules
 ```
 
-Reject follows the same write path into `rules/rejected/`. A later `--learn` pass sends those ids with the learned ids, so the model does not propose the same rule again.
+Reject opens a pull request on branch `rejected/<id>` that adds `rules/rejected/<id>.yaml`. After that pull request is merged, a later `--learn` pass sends the id with the learned ids, so the model does not propose the same rule again.
 
 A scan without `--learn` stops after the saved rules run. That path is deterministic and does not call the model.
 
@@ -318,7 +319,7 @@ Deliver the loop that adds rules to this repository, plus the detectors that YAM
 - The model comes from `BADSCAN_MODEL` (`provider:name`). Switching from OpenAI to Anthropic, Gemini, Groq, or another provider Pydantic AI ships is a change to that string.
 - Tests drive the same agent with Pydantic AI's `TestModel`, so the learn path runs without a live provider.
 - Candidates are stored locally. `patterns review` confirms or rejects each one.
-- Confirm commits `rules/learned/<id>.yaml` on branch `learned/<id>` and opens a pull request. The rule is loaded after that pull request is merged. Reject writes `rules/rejected/<id>.yaml` and commits it on the current branch.
+- Confirm commits `rules/learned/<id>.yaml` on branch `learned/<id>` and opens a pull request. The rule is loaded after that pull request is merged. Reject commits `rules/rejected/<id>.yaml` on branch `rejected/<id>` and opens a pull request. The id is suppressed after that pull request is merged.
 - A scan after the merge loads the new learned file with no model call.
 - Python AST catalog: bare `except`, `eval` / `exec`, `subprocess` with `shell=True`, and `verify=False`.
 - Builtin registry detectors for dependencies declared in Python and npm manifests. `--no-network` skips them.

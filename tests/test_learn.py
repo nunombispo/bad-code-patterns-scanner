@@ -114,6 +114,51 @@ def test_learn_confirm_opens_pull_request(tmp_path: Path, monkeypatch) -> None:
     assert [finding.rule_id for finding in merged.findings] == ["learned.placeholder-token"]
 
 
+def test_reject_opens_pull_request(tmp_path: Path, monkeypatch) -> None:
+    repo = tmp_path / "tool"
+    rules = repo / "rules"
+    for folder in ("builtin", "learned", "rejected"):
+        (rules / folder).mkdir(parents=True)
+    _git_init(repo)
+    target = tmp_path / "sample"
+    (target / "src").mkdir(parents=True)
+    (target / "src" / "app.py").write_text(SOURCE, encoding="utf-8")
+    monkeypatch.setenv("BADSCAN_RULES", str(rules))
+    monkeypatch.setenv("BADSCAN_CANDIDATES", str(tmp_path / "candidates"))
+    monkeypatch.delenv("BADSCAN_MODEL", raising=False)
+    published: dict[str, str] = {}
+
+    def fake_publish(checkout: Path, branch: str, base: str, title: str, body: str) -> str:
+        published["branch"] = branch
+        published["base"] = base
+        published["title"] = title
+        published["body"] = body
+        return "https://github.com/example/badscan/pull/10"
+
+    monkeypatch.setattr("badscan.review.repo_writer.publish_pattern_pr", fake_publish)
+    execute_learn(
+        str(target),
+        ScanOptions(no_network=True),
+        model=TestModel(custom_output_args=_proposal()),
+    )
+    reviewed = RUNNER.invoke(app, ["patterns", "review", "--repo", str(repo)], input="reject\n")
+    assert reviewed.exit_code == 0
+    assert "https://github.com/example/badscan/pull/10" in reviewed.stdout
+    assert published["branch"] == "rejected/learned.placeholder-token"
+    assert published["title"] == "Reject pattern learned.placeholder-token"
+    assert "rules/rejected" in published["body"]
+    assert not (rules / "rejected" / "learned.placeholder-token.yaml").is_file()
+
+    subprocess.run(
+        ["git", "checkout", "rejected/learned.placeholder-token"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    text = (rules / "rejected" / "learned.placeholder-token.yaml").read_text(encoding="utf-8")
+    assert "status: rejected" in text
+
+
 def test_rejected_id_is_not_proposed_again(tmp_path: Path, monkeypatch) -> None:
     rules = tmp_path / "rules"
     for folder in ("builtin", "learned", "rejected"):
