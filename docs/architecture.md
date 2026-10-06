@@ -4,7 +4,7 @@ badscan is a static scanner for public GitHub repositories and local trees. It f
 
 A scan reports evidence and a confidence score. The tool does not claim that a file was written by a model.
 
-The pattern library lives in this repository. A scan loads saved rules and applies them locally. An optional AI pass proposes new rules. After confirmation, the tool writes the rule back into this repo and commits it, so later scans and later installs use it.
+The pattern library lives in this repository. A scan loads saved rules and applies them locally. An optional AI pass proposes new rules. After confirmation, the tool opens a pull request that adds the rule. Later scans use the rule once that pull request is merged.
 
 ## System context
 
@@ -20,7 +20,7 @@ flowchart LR
   operator --> cli
   cli -->|shallow clone, read only| target
   cli -->|load builtin and learned rules| rules
-  cli -->|commit confirmed or rejected YAML| rules
+  cli -->|pull request for a confirmed rule| rules
   cli -->|package existence checks| registry
   cli -->|source chunks, only with --learn| model
 ```
@@ -99,25 +99,26 @@ flowchart TB
 | Pydantic AI agent | Sends those chunks to the configured model and returns a typed `LearnResult` (findings plus pattern proposals). The model is a `provider:name` string, so the same agent runs against any provider Pydantic AI supports. |
 | Proposal validator | Compiles each proposed regex, checks the match example, and checks the reject example. Invalid proposals are kept with the finding and are not added to the library. |
 | Local candidates | Holds proposals that passed validation until the operator reviews them. This directory is outside the git repo. |
-| Repo writer | On confirm or reject, writes one YAML file into `rules/learned/` or `rules/rejected/` and commits it on the current branch. |
+| Repo writer | On confirm, commits `rules/learned/<id>.yaml` on branch `learned/<id>` and opens a pull request. On reject, commits `rules/rejected/<id>.yaml` on the current branch. |
 | Report | Renders findings as text or JSON. |
 
-`scan` never calls the model. `--learn` adds the learn path. `patterns review` is the only way a candidate becomes a file under `rules/`.
+`scan` never calls the model. `--learn` adds the learn path. `patterns review` is the only way a candidate becomes a pull request. Merging that pull request is what adds the file under `rules/`.
 
 ## Pattern lifecycle
 
 ```mermaid
 stateDiagram-v2
   [*] --> Candidate: proposal passes validation
-  Candidate --> Learned: confirm writes rules/learned and commits
+  Candidate --> PullRequest: confirm opens a pull request
+  PullRequest --> Learned: merge adds rules/learned
   Candidate --> Rejected: reject writes rules/rejected and commits
   Learned --> Applied: next scan loads the file
   Rejected --> Suppressed: next learn pass skips that id
 ```
 
-A proposal becomes a candidate only after the regex compiles, the match example matches, and the reject example does not. Confirm and reject each create one commit on the tool checkout. Push is a separate `patterns push`, so a confirm stays local until it is published.
+A proposal becomes a candidate only after the regex compiles, the match example matches, and the reject example does not. Confirm commits the rule on branch `learned/<id>`, pushes that branch, and opens a GitHub pull request against the default branch. The current checkout does not gain the rule. Merging the pull request is the manual validation that adds it to the library. Reject commits `rules/rejected/<id>.yaml` on the current branch.
 
-Confirm runs inside a git checkout of this tool. Pass `--repo` when the shell is in another directory. The writer does not update an installed copy under `site-packages`.
+Confirm runs inside a git checkout of this tool that has a GitHub `origin` and an authenticated `gh` command. Pass `--repo` when the shell is in another directory. The writer does not update an installed copy under `site-packages`.
 
 ## Scan, learn, and confirm
 
@@ -141,10 +142,11 @@ sequenceDiagram
   Op->>CLI: patterns review
   CLI-->>Op: rule, matches, examples
   Op->>CLI: confirm
-  CLI->>Repo: write rules/learned/id.yaml and commit
+  CLI->>Repo: branch learned/id, commit rules/learned/id.yaml, open a pull request
+  Op->>Repo: merge the pull request
 
   Op->>CLI: scan other/repo
-  CLI->>Repo: load rules, including the new file
+  CLI->>Repo: load rules, including the merged file
   CLI->>Target: shallow clone
   CLI-->>Op: matches from builtin and learned rules
 ```
@@ -316,24 +318,23 @@ Deliver the loop that adds rules to this repository, plus the detectors that YAM
 - The model comes from `BADSCAN_MODEL` (`provider:name`). Switching from OpenAI to Anthropic, Gemini, Groq, or another provider Pydantic AI ships is a change to that string.
 - Tests drive the same agent with Pydantic AI's `TestModel`, so the learn path runs without a live provider.
 - Candidates are stored locally. `patterns review` confirms or rejects each one.
-- Confirm writes `rules/learned/<id>.yaml` and commits it. Reject writes `rules/rejected/<id>.yaml` and commits it.
-- The next `scan` loads the new learned file with no model call.
+- Confirm commits `rules/learned/<id>.yaml` on branch `learned/<id>` and opens a pull request. The rule is loaded after that pull request is merged. Reject writes `rules/rejected/<id>.yaml` and commits it on the current branch.
+- A scan after the merge loads the new learned file with no model call.
 - Python AST catalog: bare `except`, `eval` / `exec`, `subprocess` with `shell=True`, and `verify=False`.
 - Builtin registry detectors for dependencies declared in Python and npm manifests. `--no-network` skips them.
 - Duplicate detection against ids already in `learned/` and `rejected/`.
 
-Done when a `--learn` run on a fixture produces a candidate, confirm commits a YAML file under `rules/learned/`, and a second scan matches that rule with the model disabled.
+Done when a `--learn` run on a fixture produces a candidate, confirm opens a pull request whose branch contains the YAML, and a scan of that branch matches the rule with the model disabled. The default branch does not contain the rule until the pull request is merged.
 
 ### Phase 3 — Publish and hunt
 
 Deliver sharing of the library and scans across many public repositories. Hunt mode reuses the phase 1 scan path.
 
-- `patterns push` pushes the tool branch that holds new learned or rejected commits.
 - A GitHub Action runs the deterministic scan (no `--learn`) on this repository's fixtures and on a chosen target.
 - Hunt mode accepts a GitHub repository search, scans each public repo up to a limit, and writes a markdown report.
 - Hunt mode honors rate limits, caches clones, and can resume.
 
-Done when a confirmed pattern can be pushed from the CLI, the Action runs the deterministic scan, and one hunt invocation scans multiple public repositories with the saved library.
+Done when the Action runs the deterministic scan and one hunt invocation scans multiple public repositories with the saved library. A learned rule is already published by merging the pull request that confirm opened.
 
 ## Out of scope
 

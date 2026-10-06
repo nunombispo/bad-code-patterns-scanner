@@ -62,7 +62,7 @@ def test_learn_requires_a_model(tmp_path: Path, monkeypatch) -> None:
     assert "BADSCAN_MODEL" in result.output
 
 
-def test_learn_confirm_then_scan_without_model(tmp_path: Path, monkeypatch) -> None:
+def test_learn_confirm_opens_pull_request(tmp_path: Path, monkeypatch) -> None:
     repo = tmp_path / "tool"
     rules = repo / "rules"
     for folder in ("builtin", "learned", "rejected"):
@@ -74,6 +74,16 @@ def test_learn_confirm_then_scan_without_model(tmp_path: Path, monkeypatch) -> N
     monkeypatch.setenv("BADSCAN_RULES", str(rules))
     monkeypatch.setenv("BADSCAN_CANDIDATES", str(tmp_path / "candidates"))
     monkeypatch.delenv("BADSCAN_MODEL", raising=False)
+    published: dict[str, str] = {}
+
+    def fake_publish(checkout: Path, branch: str, base: str, title: str, body: str) -> str:
+        published["branch"] = branch
+        published["base"] = base
+        published["title"] = title
+        published["body"] = body
+        return "https://github.com/example/badscan/pull/9"
+
+    monkeypatch.setattr("badscan.review.repo_writer.publish_pattern_pr", fake_publish)
 
     outcome = execute_learn(
         str(target),
@@ -84,20 +94,24 @@ def test_learn_confirm_then_scan_without_model(tmp_path: Path, monkeypatch) -> N
 
     reviewed = RUNNER.invoke(app, ["patterns", "review", "--repo", str(repo)], input="confirm\n")
     assert reviewed.exit_code == 0
-    assert "confirmed learned.placeholder-token" in reviewed.stdout
-    learned = rules / "learned" / "learned.placeholder-token.yaml"
-    assert learned.is_file()
-    log = subprocess.run(
-        ["git", "log", "-1", "--format=%s"],
+    assert "https://github.com/example/badscan/pull/9" in reviewed.stdout
+    assert published["base"] == "main"
+    assert published["branch"] == "learned/learned.placeholder-token"
+    assert published["title"] == "Add learned pattern learned.placeholder-token"
+    assert "TOKEN_PLACEHOLDER" in published["body"]
+    assert not (rules / "learned" / "learned.placeholder-token.yaml").is_file()
+
+    unchanged = execute_scan(str(target), ScanOptions(no_network=True))
+    assert unchanged.findings == []
+
+    subprocess.run(
+        ["git", "checkout", "learned/learned.placeholder-token"],
         cwd=repo,
         check=True,
         capture_output=True,
-        text=True,
     )
-    assert log.stdout.strip() == "Add learned pattern learned.placeholder-token"
-
-    result = execute_scan(str(target), ScanOptions(no_network=True))
-    assert [finding.rule_id for finding in result.findings] == ["learned.placeholder-token"]
+    merged = execute_scan(str(target), ScanOptions(no_network=True))
+    assert [finding.rule_id for finding in merged.findings] == ["learned.placeholder-token"]
 
 
 def test_rejected_id_is_not_proposed_again(tmp_path: Path, monkeypatch) -> None:
@@ -122,6 +136,14 @@ def test_rejected_id_is_not_proposed_again(tmp_path: Path, monkeypatch) -> None:
 
 
 def _git_init(repo: Path) -> None:
-    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
     subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
     subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+    (repo / "rules" / "builtin" / ".gitkeep").write_text("", encoding="utf-8")
+    subprocess.run(["git", "add", "rules"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "Initial rules"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
